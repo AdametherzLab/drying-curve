@@ -13,6 +13,8 @@ import {
   loadSession,
   loadAllSessions,
   deleteSession,
+  createFileStorageAdapter,
+  StorageError,
   type DryingSession,
   type DryingConfig,
   type WeightEntry,
@@ -238,6 +240,112 @@ describe("drying-curve public API", () => {
 
       const loaded = await loadSession(session.config.sessionId, tempDir);
       expect(loaded).toBeNull();
+    });
+  });
+
+  describe("file error handling", () => {
+    let tempDir: string;
+
+    beforeEach(() => {
+      tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "drying-curve-err-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    });
+
+    it("throws StorageError with INVALID_JSON code for corrupted files", async () => {
+      const filePath = path.join(tempDir, "drying-sessions.json");
+      fs.writeFileSync(filePath, "not valid json {{{", "utf-8");
+
+      try {
+        await loadAllSessions(tempDir);
+        expect(true).toBe(false); // should not reach
+      } catch (err) {
+        expect(err).toBeInstanceOf(StorageError);
+        expect((err as StorageError).code).toBe("INVALID_JSON");
+        expect((err as StorageError).message).toContain("invalid JSON");
+      }
+    });
+
+    it("throws StorageError with INVALID_FORMAT for non-array JSON", async () => {
+      const filePath = path.join(tempDir, "drying-sessions.json");
+      fs.writeFileSync(filePath, JSON.stringify({ not: "an array" }), "utf-8");
+
+      try {
+        await loadAllSessions(tempDir);
+        expect(true).toBe(false);
+      } catch (err) {
+        expect(err).toBeInstanceOf(StorageError);
+        expect((err as StorageError).code).toBe("INVALID_FORMAT");
+        expect((err as StorageError).message).toContain("does not contain an array");
+      }
+    });
+
+    it("returns empty array for an empty file", async () => {
+      const filePath = path.join(tempDir, "drying-sessions.json");
+      fs.writeFileSync(filePath, "", "utf-8");
+
+      const sessions = await loadAllSessions(tempDir);
+      expect(sessions).toEqual([]);
+    });
+
+    it("throws StorageError with Permission denied for read-only directory", async () => {
+      const readonlyDir = path.join(tempDir, "readonly");
+      fs.mkdirSync(readonlyDir);
+      fs.chmodSync(readonlyDir, 0o444);
+
+      try {
+        await saveSession(testSession, readonlyDir);
+        expect(true).toBe(false);
+      } catch (err) {
+        expect(err).toBeInstanceOf(StorageError);
+        expect((err as StorageError).message).toContain("Permission denied");
+      } finally {
+        fs.chmodSync(readonlyDir, 0o755);
+      }
+    });
+
+    it("throws StorageError for relative file path in adapter", () => {
+      expect(() => createFileStorageAdapter("relative/path.json")).toThrow(StorageError);
+      expect(() => createFileStorageAdapter("relative/path.json")).toThrow("must be absolute");
+    });
+
+    it("throws StorageError for empty file path in adapter", () => {
+      expect(() => createFileStorageAdapter("")).toThrow(StorageError);
+      expect(() => createFileStorageAdapter("")).toThrow("non-empty string");
+    });
+
+    it("filters out invalid session objects from stored data", async () => {
+      const filePath = path.join(tempDir, "drying-sessions.json");
+      const mixedData = [
+        { config: { sessionId: "valid-1" }, measurements: [], moistureEstimates: [], dryingRates: [], summary: {} },
+        { noConfig: true },
+        null,
+        42,
+        "string",
+        { config: { sessionId: "valid-2" }, measurements: [], moistureEstimates: [], dryingRates: [], summary: {} },
+      ];
+      fs.writeFileSync(filePath, JSON.stringify(mixedData), "utf-8");
+
+      const sessions = await loadAllSessions(tempDir);
+      expect(sessions).toHaveLength(2);
+      expect(sessions[0].config.sessionId).toBe("valid-1");
+      expect(sessions[1].config.sessionId).toBe("valid-2");
+    });
+
+    it("cleans up temp files on write failure", async () => {
+      const entry: WeightEntry = {
+        timestamp: "2024-01-01T10:00:00Z",
+        weightGrams: 950,
+      };
+      const session = addWeightEntry(testSession, entry);
+
+      // Save normally first, then verify no .tmp files remain
+      await saveSession(session, tempDir);
+      const files = fs.readdirSync(tempDir);
+      const tmpFiles = files.filter((f) => f.endsWith(".tmp"));
+      expect(tmpFiles).toHaveLength(0);
     });
   });
 });
