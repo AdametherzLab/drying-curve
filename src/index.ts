@@ -36,3 +36,17 @@ export {
 } from "./storage.js";
 
 export type { StorageAdapter } from "./storage.js";
+
+// Interactive Drying Curve Visualization exports
+export type {
+  ChartPoint,
+  ChartDataset,
+  SessionVisualization,
+  HTMLReportOptions,
+} from "./visualization.js";
+
+export {
+  generateVisualizationData,
+  generateHTMLReport,
+  saveVisualizationReport,
+} from "./visualization.js";
