@@ -1,4 +1,7 @@
 import type { DryingSession, WeightEntry, MoistureEstimate, DryingRate } from './types.js';
+import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
+import { StorageError } from './storage.js';
 
 export type ChartPoint = {
   x: string;
@@ -124,6 +127,7 @@ export function generateVisualizationData(session: DryingSession): SessionVisual
 export function generateHTMLReport(session: DryingSession, options: HTMLReportOptions = {}): string {
   const viz = generateVisualizationData(session);
   const chartHeight = options.chartHeight ?? 300;
+  const hasMeasurements = session.measurements.length > 0;
   
   const themeStyles = options.theme === 'dark' ? {
     background: '#1f2937',
@@ -248,12 +252,18 @@ export function generateHTMLReport(session: DryingSession, options: HTMLReportOp
         data: ${JSON.stringify(viz.datasets.moistureContent.data)},
         borderColor: '${viz.datasets.moistureContent.borderColor}',
         yLabel: '${viz.datasets.moistureContent.yAxisLabel}',
-        extraDatasets: [{
+        extraDatasets: ${hasMeasurements ? `[{
           label: 'Target (${viz.targetMoisture}%)',
           borderColor: '${CHART_COLORS.targetLine}',
           borderDash: [5,5],
-          data: [{ x: '${session.measurements[0]?.timestamp}', y: ${viz.targetMoisture} }, { x: '${session.measurements[session.measurements.length-1]?.timestamp}', y: ${viz.targetMoisture} }]
-        }]
+          data: [{
+            x: '${session.measurements[0].timestamp}',
+            y: ${viz.targetMoisture}
+          }, {
+            x: '${session.measurements[session.measurements.length-1].timestamp}',
+            y: ${viz.targetMoisture}
+          }]
+        }]` : '[]'}
       });
 
       createChart('rateChart', {
@@ -307,13 +317,13 @@ export async function saveVisualizationReport(
   options?: HTMLReportOptions
 ): Promise<void> {
   if (!filePath || typeof filePath !== 'string') {
-    throw new Error('File path must be a non-empty string');
+    throw new StorageError('INVALID_PATH', 'File path must be a non-empty string');
   }
   if (!path.isAbsolute(filePath)) {
-    throw new Error('File path must be absolute');
+    throw new StorageError('INVALID_PATH', 'File path must be absolute');
   }
 
   const html = generateHTMLReport(session, options);
-  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
   await fs.promises.writeFile(filePath, html, 'utf-8');
 }
